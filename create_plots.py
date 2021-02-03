@@ -5,6 +5,7 @@ from matplotlib import colors
 from datetime import datetime as dt
 import pandas as pd
 import mapclassify as mc
+import numpy as np
 
 # return (year, weeknum)
 # I use this to get the sorting order to be chronological
@@ -37,19 +38,32 @@ def export_quantile_plot(map, quantiles, plot_title, path, k):
     plt.title(plot_title)
     plt.savefig(path)
 
-def export_hotcold_plot(map, quadrants, plot_title, path):
-    # map colors: not significant, hot spot, doughnut, cold spot, diamond
+def export_hotcold_plot(map, quadrants, plot_title, path, incl_dd):
 
-    hcmap = colors.ListedColormap(['navajowhite', 'red', 'lightblue', 'blue', 'pink'])
+    #
+    #
+    # NEED TO FIX MAP COLORING
+    #
+    #
 
-    # the labels have to be sorted into the same order as the hcmap, you can leave the legends as the numbers
-    # by changing cl=quadrants, but I don't know how to get the colors right without using numbers
-    labels = ["0. Not Significant", "1. Hot Spot", "2. Doughnut", "3. Cold Spot", "4. Diamond"]
+    if incl_dd:
+        # map colors: not significant, hot spot, doughnut, cold spot, diamond
+        hcmap = colors.ListedColormap(['navajowhite', 'red', 'lightblue', 'blue', 'pink'])
+
+        # the labels have to be sorted into the same order as the hcmap, you can leave the legends as the numbers
+        # by changing cl=quadrants, but I don't know how to get the colors right without using numbers
+        labels = ["0. Not Significant", "1. Hot Spot", "2. Doughnut", "3. Cold Spot", "4. Diamond"]
+    else:
+        hcmap = colors.ListedColormap(['navajowhite', 'red', 'blue'])
+        labels = ["0. Not Significant", "1. Hot Spot", "2. Cold Spot"]
 
     f, ax = plt.subplots(1, figsize=(9, 9))
 
+    # need to offset labels when only including 2 quadrants
+    map_labels = [(labels[i] if incl_dd else labels[int((i+1) / 2)]) for i in quadrants]
+
     map \
-        .assign(cl = [labels[i] for i in quadrants]) \
+        .assign(cl = map_labels) \
         .plot(column='cl', categorical=True, k=2, cmap=hcmap, linewidth=0.1, ax=ax, edgecolor='black', legend=True)
 
     ax.set_axis_off()
@@ -62,9 +76,16 @@ def single_col_calc(data_col, map, W, heat, incl_dd, plot_title, path, sig, k):
     quadrants = get_quadrant(local_moran, sig)
 
     if path:
+
+        #
+        #
+        # TODO: STACK GRAPHS
+        #
+        #
+
         if heat:
             map_quadrants = filter_quadrants(quadrants, incl_dd)
-            export_hotcold_plot(map, map_quadrants, plot_title, path)
+            export_hotcold_plot(map, map_quadrants, plot_title, path, incl_dd)
         else:
             export_quantile_plot(map, get_quantiles(data_col, 10), plot_title, path, k)
 
@@ -72,6 +93,8 @@ def single_col_calc(data_col, map, W, heat, incl_dd, plot_title, path, sig, k):
 
 #
 #   MAIN FUNCTION
+#       - split into different functions
+#
 #
 def create_plots(data, map, cols, date_col, group_col, folder, date_format='%Y-%m-%d', by='week', heat = True, incl_dd = False, sig = 0.05, limit=None, k = 10):
     # You can calculate the weights just once, if you have data for every county for each interval
@@ -93,6 +116,8 @@ def create_plots(data, map, cols, date_col, group_col, folder, date_format='%Y-%
             .groupby([date_col, group_col])[cols].mean() \
             .groupby(date_col)
 
+    colored_vals = {}
+
     # cycle through each date period
     for i, (date, group) in enumerate(grouped):
         if i == limit:
@@ -107,5 +132,20 @@ def create_plots(data, map, cols, date_col, group_col, folder, date_format='%Y-%
         for col in cols:
             path = f"{folder}/{by}{i}_{col}_{'heat' if heat else 'quantile'}{'_dd' if heat and incl_dd else ''}.png" if folder else None
 
-            print(path, plot_title)
-            single_col_calc(group[col], map, W, heat, incl_dd, plot_title, path, sig, k)
+            if folder: 
+                single_col_calc(group[col], map, W, heat, incl_dd, plot_title, path, sig, k)
+            else:
+                colored_vals[i] = single_col_calc(group[col], map, W, heat, incl_dd, plot_title, path, sig, k)
+
+    if colored_vals:
+        import json
+
+        class NumpyEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                return json.JSONEncoder.default(self, obj)
+
+        with open("./counties.json", "w") as out_file:
+            dumps = json.dumps(colored_vals, cls=NumpyEncoder)
+            json.dump(dumps, out_file)
