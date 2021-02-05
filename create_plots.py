@@ -79,6 +79,156 @@ def group_data(data, cols, date_col, group_col, by='week'):
 #
 #
 #
+#   MAPPING FUNCTIONS
+#
+#
+#
+
+#
+#
+#
+#   HEAT MAPS:
+#
+#
+#
+
+def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, folder, color_change="color", by='week', incl_dd = False, stack = False, limit=None, sig = 0.05):
+    
+    if not isinstance(cols, list):
+        cols = [cols]
+
+    num_itrs = min(limit, len(grouped)) if limit else len(grouped)
+    for j, col in enumerate(cols):
+
+        if stack: # reset plot
+            f, ax = plt.subplots(figsize=(9, 9))
+            f.set_facecolor("white")
+
+        for i, (date, group) in tqdm(enumerate(grouped), total=num_itrs):
+            if limit and i * len(cols) + j == limit:
+                break
+
+            if i == 0:
+                first_date = min(group[date_col[0]]) if len(date_col) > 0 else min(group[date_col])
+
+            # it's important we merge on map so grouping order is consistent
+            ordered = pd.merge(map, group, left_on=map_group_col, right_on=group_col)
+
+            W = lps.weights.Queen(ordered['geometry'])
+            W.transform = 'r' # pysal.org/libpysal/generated/libpysal.weights.W.html#libpysal.weights.W.set_transform
+            
+            # Local Moran quadrants
+            local_moran = Moran_Local(ordered[col], W)
+            quadrants = local_moran.q * (local_moran.p_sim < sig) # significant quadrant values
+
+            if not incl_dd: 
+                quadrants = quadrants * (quadrants % 2 != 0) # remove doughnut and diamond
+
+            if not stack: # reset plot
+                f, ax = plt.subplots(figsize=(9, 9))
+                f.set_facecolor("white")
+            
+            # the labels have to be sorted into the same order as the hcmap, you can leave the legends as the numbers
+            # by changing cl=quadrants, but I don't know how to get the colors right without using numbers
+            labels = ["0. Not Significant", "1. Hot Spot", "2. Doughnut", f"{3 if incl_dd else 2}. Cold Spot", "4. Diamond"]
+            filtered_labels = filter_dd(labels, incl_dd)
+
+            hcmap = get_heat_map_colors(incl_dd, stack, i, num_itrs, color_change)
+
+            # We want all the labels in the legend:
+            #  * Append blank rows to the map
+            #  * Assign the correct labels to rows with information, And all labels to the blank rows
+            map \
+                .append([{k: None for k in map.columns} for _ in range(len(filtered_labels))], ignore_index=True) \
+                .assign(cl = [*[labels[q] for q in quadrants], *filtered_labels]) \
+                .plot(column='cl', categorical=True, k=2, cmap=hcmap, ax=ax, legend=True, edgecolor='black', linewidth=0.3)
+
+            if not stack:
+
+                if isinstance(date_col, list):
+                    date = [min(ordered[date_col[0]]), max(ordered[date_col[1]])]
+                    plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
+                else:
+                    date = min(ordered[date_col])
+                    plot_title = f"{col.title().replace('_', ' ')}, {date}"
+
+                path=f"{folder}/{by}{i}_{col}_heat{'_dd' if incl_dd else ''}.png"
+                ax.set_axis_off()
+                ax.set_title(plot_title)
+                plt.savefig(path)
+
+        if stack:
+            if isinstance(date_col, list):
+                date = [first_date, max(ordered[date_col[1]])]
+                plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
+            else:
+                date = min(ordered[date_col])
+                plot_title = f"{col.title().replace('_', ' ')}, {date}"
+
+            plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
+            path=f"{folder}/stacked_{col}_heat{'_dd' if incl_dd else ''}.png"
+            ax.set_axis_off()
+            ax.set_title(plot_title)
+            plt.savefig(path)
+
+#
+#
+#
+#   QUANTILE MAPS:
+#
+#
+#
+
+def create_quantile_map(grouped, cols, date_col, group_col, map, map_group_col, folder, by='week', limit=None, sig = 0.05, k=10):
+    if not isinstance(cols, list):
+        cols = [cols]
+    
+    num_itrs = min(limit, len(grouped)) if limit else len(grouped)
+    count = 0
+    for i, (date, group) in tqdm(enumerate(grouped), total=num_itrs):
+        # merge to correct order
+        ordered = pd.merge(map, group, left_on=map_group_col, right_on=group_col)
+
+        for col in cols:
+            quantiles = mc.Quantiles(ordered[col], k=k)
+
+            if limit and count == limit: 
+                break
+            count += 1
+
+            f, ax = plt.subplots(figsize=(9, 9))
+            f.set_facecolor("white") # plot backgroundcolor, I like navajowhite
+
+            bins = [0] + sorted(np.unique(quantiles.bins))
+            bins = [str(int(bins[i - 1])) + "-" + str(int(bins[i])) for i in range(1, len(bins))]
+
+            map \
+                .assign(cl = [bins[i] for i in quantiles.yb]) \
+                .plot(column='cl', categorical=True, k=k, cmap='OrRd', linewidth=0.1, ax=ax, edgecolor='black', legend=True)
+
+            if isinstance(date_col, list):
+                date = [min(ordered[date_col[0]]), max(ordered[date_col[1]])]
+                plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
+            else:
+                date = min(ordered[date_col])
+                plot_title = f"{col.title().replace('_', ' ')}, {date}"
+
+            ax.set_axis_off()
+            plt.title(plot_title)
+            plt.savefig(f"{folder}/quantile_{col}_{i}_k{k}.png")
+
+
+# ################################# #
+#                                   #
+#                                   #
+# ##### END OF MAIN FUNCTIONS ##### #
+#                                   #
+#                                   #
+# ################################# #
+
+#
+#
+#
 #   UTILITY FUNCTIONS:
 #
 #
