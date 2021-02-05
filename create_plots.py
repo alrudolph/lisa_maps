@@ -79,42 +79,6 @@ def group_data(data, cols, date_col, group_col, by='week'):
 #
 #
 #
-#   MAPPING FUNCTIONS
-#
-#
-#
-
-#
-#
-#
-#   HEAT MAPS:
-#
-#
-#
-
-def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, folder, color_change, date_format='%Y-%m-%d', by='week', incl_dd = False, stack = False, limit=None, sig = 0.05):
-    export = export_heat_vals(grouped, cols, date_col, group_col, map, map_group_col, date_format, limit, sig)
-    create_heat_map_from_export(grouped, export, cols, grouped[date_col], map, folder, color_change, date_format, by, incl_dd, stack, limit, sig)
-
-#
-#
-#
-#   QUANTILE MAPS:
-#
-#
-#
-
-# ################################# #
-#                                   #
-#                                   #
-# ##### END OF MAIN FUNCTIONS ##### #
-#                                   #
-#                                   #
-# ################################# #
-
-#
-#
-#
 #   UTILITY FUNCTIONS:
 #
 #
