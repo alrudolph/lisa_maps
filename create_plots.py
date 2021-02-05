@@ -1,5 +1,5 @@
 import libpysal as lps
-from esda import Moran_Local
+from esda import Moran_Local, Moran
 import matplotlib.pyplot as plt
 from matplotlib import colors
 from datetime import datetime as dt
@@ -80,180 +80,17 @@ def group_data(data, cols, date_col, group_col, date_format='%Y-%m-%d', by='week
 
     return grouped
 
-def export_quantile_vals(grouped, cols, date_col, group_col, map, map_group_col, folder, date_format='%Y-%m-%d', by='week', incl_dd = False, k=10, limit=1, sig = 0.05):
-    if not isinstance(cols, list):
-        cols = [cols]
-
-    for i, col in enumerate(cols):
-
-        for j, (date, group) in enumerate(grouped):
-            if i * len(cols) + j == limit:
-                break
-
-            ordered = pd.merge(map, group, left_on=map_group_col, right_on=group_col)
-            quantiles = mc.Quantiles(ordered[col], k=k)
-
-            plot_title = "plot_title"
-            path = "./example/output1/quantile.png"
-
-            export_quantile_plot(map, quantiles, plot_title, path, k)
-
-    return 
-
-def create_quantile_map(grouped, cols, date_col, group_col, map, map_group_col, folder, date_format='%Y-%m-%d', by='week', incl_dd = False, k=10, limit=1, sig = 0.05, stacked=False):
-
-    quantiles = export_quantile_vals(grouped, cols, date_col, group_col, map, map_group_col, folder, date_format, by, incl_dd, k, limit, sig)
-
-    #
-    #
-    #   DO STUFF HERE
-    #
-
-    f, ax = plt.subplots(1, figsize=(9, 9))
-
-    map \
-        .assign(cl = quantiles.yb) \
-        .plot(column='cl', categorical=True, k=k, cmap='OrRd', linewidth=0.1, ax=ax, edgecolor='black', legend=True)
-
-    ax.set_axis_off()
-    plt.title(plot_title)
-    plt.savefig(path)
+#
+#
+#
+#   MAPPING FUNCTIONS
+#
+#
+#
 
 def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, folder, color_change, date_format='%Y-%m-%d', by='week', incl_dd = False, stack = False, limit=None, sig = 0.05):
     export = export_heat_vals(grouped, cols, date_col, group_col, map, map_group_col, date_format, limit, sig)
     create_heat_map_from_export(grouped, export, cols, grouped[date_col], map, folder, color_change, date_format, by, incl_dd, stack, limit, sig)
-
-#
-#
-#
-#   HEAT MAP:
-#
-#
-#
-
-
-def create_heat_map_from_export(export, cols, date_col, map, folder, color_change, date_format='%Y-%m-%d', by='week', incl_dd = False, stack = False, limit=None, sig = 0.05):
-
-    if not isinstance(cols, list):
-        cols = [cols]
-
-    count = 0
-    for col in cols: 
-
-        if stack:
-            f, ax = plt.subplots(figsize=(9, 9))
-            f.set_facecolor("navajowhite") # plot backgroundcolor, I like navajowhite
-
-        num_itrs = min(limit, len(export[col])) if limit else len(export[col])
-        for i, quadrants in tqdm(enumerate(export[col]), total=num_itrs):
-
-            if limit and count - 1 == limit: 
-                break
-            count += 1
-
-            if not incl_dd: 
-                quadrants = quadrants * (quadrants % 2 != 0) # remove doughnut and diamond
-
-            if not stack: 
-                f, ax = plt.subplots(figsize=(9, 9)) # reset plot
-                f.set_facecolor("navajowhite")
-            
-            # the labels have to be sorted into the same order as the hcmap, you can leave the legends as the numbers
-            # by changing cl=quadrants, but I don't know how to get the colors right without using numbers
-            labels = ["0. Not Significant", "1. Hot Spot", "2. Doughnut", f"{3 if incl_dd else 2}. Cold Spot", "4. Diamond"]
-            filtered_labels = filter_dd(labels, incl_dd)
-
-            hcmap = get_heat_map_colors(incl_dd, stack, i, num_itrs, color_change)
-
-            # We want all the labels in the legend:
-            #  * Append blank rows to the map
-            #  * Assign the correct labels to rows with information, And all labels to the blank rows
-            map \
-                .append([{k: None for k in map.columns} for _ in range(len(filtered_labels))], ignore_index=True) \
-                .assign(cl = [*[labels[q] for q in quadrants], *filtered_labels]) \
-                .plot(column='cl', categorical=True, k=2, cmap=hcmap, ax=ax, legend=True, edgecolor='black', linewidth=0.3)
-
-            if not stack:
-                date = export[date_col][i]
-
-                if isinstance(date, list):
-                    plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
-                else:
-                    plot_title = f"{col.title().replace('_', ' ')}, {date}"
-
-                path=f"{folder}/{by}{i}_{col}_heat{'_dd' if incl_dd else ''}.png"
-                ax.set_axis_off()
-                ax.set_title(plot_title)
-                plt.savefig(path)
-
-        if stack:
-            date = [export[date_col][0], export[date_col][num_itrs - 1]]
-
-            if isinstance(export[date_col][0], list):
-                date = [date[0][0], date[1][1]]
-
-            plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
-            path=f"{folder}/stacked_{col}_heat{'_dd' if incl_dd else ''}.png"
-            ax.set_axis_off()
-            ax.set_title(plot_title)
-            plt.savefig(path)
-
-def export_heat_vals(grouped, cols, date_col, group_col, map, map_group_col, date_format='%Y-%m-%d', limit=None, sig = 0.05):
-    """
-    Calculate map quadrants for each grouping
-
-    Parameters
-    ----------
-    grouped : dataframe
-
-    cols : str | list[str]
-
-    date_col : str
-
-    group_col : str
-
-    map : dataframe
-
-    map_group_col : str
-
-    date_format : str, optional
-
-    limit : num, optional
-
-    sig : num, optional
-    
-    Return
-    ------
-    (dataframe, list)
-        Tuple of: Dateframe containing quadrants and dates, list of fip codes in order
-    """
-    if not isinstance(cols, list):
-        cols = [cols]
-
-    output = pd.DataFrame(columns=[*cols, 'date'])
-
-    for i, (date, group) in tqdm(enumerate(grouped), total=min(limit, len(grouped)) if limit else len(grouped)):
-
-        if limit and i == limit:
-            break
-
-        ordered = pd.merge(map, group, left_on=map_group_col, right_on=group_col)
-        
-        row = {
-            'date': [min(group['date_start']), max(group['date_end'])] if ('date_start' in ordered.columns) else min(group[date_col])
-        }
-
-        W = lps.weights.Queen(ordered['geometry'])
-        W.transform = 'r' # pysal.org/libpysal/generated/libpysal.weights.W.html#libpysal.weights.W.set_transform
-
-        for j, col in enumerate(cols):
-            local_moran = Moran_Local(ordered[col], W)
-            row[group.columns[j]] = get_quadrant(local_moran, sig)
-
-        output = output.append(row, ignore_index=True)
-
-    return (output, ordered[map_group_col])
-
 
 #
 #
@@ -403,22 +240,288 @@ def filter_dd(arr, incl_dd):
     """
     return arr if incl_dd else [arr[i] for i in [0, 1, 3]]
 
-def create_plots(grouped, map, cols, date_col, group_col, folder, date_format='%Y-%m-%d', by='week', heat = True, incl_dd = False, sig = 0.05, limit=None, k = 10):
+#
+#
+#
+#   EXPORT FUNCTIONS:
+#
+#
+#
 
-    # #############################################################################################################
+#
+#
+#
+#   QUANTILE MAPS:
+#
+#
+#
 
+def export_quantile_vals(grouped, cols, date_col, group_col, map, map_group_col, k=10, limit=None):
+    """
+    Calculate quantiles for each group
 
-    output = {k: [] for k in cols}
+    Parameters
+    ----------
+    grouped : dataframe
+        Result of grouped_data()
+    cols : str | list[str]
+        Column names for variables of interest
+    date_col: str
+        Column name for date column
+    group_col: str
+        Column name for grouping column (eg fips code)
+    map: dataframe
+        Geopandas dataframe containing 'geometry' column
+    map_group_col: str
+        Column name for map dataframe grouping column (eg fips)
+    k: num, 10 be default
+        Number of quantiles
+    limit: num, 1 by default
+        Limit iterations
 
-    if colored_vals:
-        import json
+    Return
+    ------
+    (dataframe, list)
+        Tuple of: dataframe containing quantile and date; list of group ordering
+    """
+    if not isinstance(cols, list):
+        cols = [cols]
+    
+    output = pd.DataFrame(columns=[*cols, 'date', *[i + "_bin" for i in cols]])
 
-        class NumpyEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                return json.JSONEncoder.default(self, obj)
+    for i, (date, group) in tqdm(enumerate(grouped), total=min(limit, len(grouped)) if limit else len(grouped)):
+        
+        if limit and i == limit:
+            break
 
-        with open("./counties.json", "w") as out_file:
-            dumps = json.dumps(colored_vals, cls=NumpyEncoder)
-            json.dump(dumps, out_file)
+        # merge to correct order
+        ordered = pd.merge(map, group, left_on=map_group_col, right_on=group_col)
+
+        row = {
+            'date': [min(group['date_start']), max(group['date_end'])] if ('date_start' in ordered.columns) else min(group[date_col])
+        }
+
+        for col in cols:
+            temp = mc.Quantiles(ordered[col], k=k)
+            row[col + "_bin"] = temp.bins
+            row[col] = temp.yb
+
+        output = output.append(row, ignore_index = True)
+
+    return (output, map[map_group_col])
+
+def create_quantile_map_from_export(export, cols, date_col, map, folder, k=10, limit=None):
+    """
+    Plot quantile map from export
+
+    Parameters
+    ----------
+    export : dataframe
+        result of export_quantile_vals
+    cols : str | list[str]
+        Column names of variable of interest
+    date_col : str
+        Name of date column
+    map : dataframe
+        Geopandas dataframe containing column 'geometry'
+    folder : str
+        output folder location
+    k : num, 10 by default
+        Number of quantiles
+    limit : num, optional
+        Limit iterations
+    
+    """
+
+    if not isinstance(cols, list):
+        cols = [cols]
+
+    count = 0
+    for col in cols: 
+
+        num_itrs = min(limit, len(export[col])) if limit else len(export[col])
+        for i, quantiles in tqdm(enumerate(export[col]), total=num_itrs):
+
+            if limit and count == limit: 
+                break
+            count += 1
+
+            f, ax = plt.subplots(figsize=(9, 9))
+            f.set_facecolor("white") # plot backgroundcolor, I like navajowhite
+
+            bins = [0] + sorted(np.unique(export[col + "_bin"][i]))
+            bins = [str(int(bins[i - 1])) + "-" + str(int(bins[i])) for i in range(1, len(bins))]
+
+            map \
+                .assign(cl = [bins[i] for i in quantiles]) \
+                .plot(column='cl', categorical=True, k=k, cmap='OrRd', linewidth=0.1, ax=ax, edgecolor='black', legend=True)
+
+            date = export[date_col][i]
+            if isinstance(date, list):
+                plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
+            else:
+                plot_title = f"{col.title().replace('_', ' ')}, {date}"
+
+            ax.set_axis_off()
+            plt.title(plot_title)
+            plt.savefig(f"{folder}/quantile_{col}_{i}_k{k}.png")
+
+#
+#
+#
+#   HEAT MAP:
+#
+#
+#
+
+def create_heat_map_from_export(export, cols, date_col, map, folder, color_change="color", by="week", incl_dd = False, stack = False, limit=None):
+    """
+    Creates heat maps.
+
+    Parameters
+    ----------
+    export : dataframe
+        Output from export_head_vals
+    cols : str | list[str]
+        Names of variables of interest
+    date_col : str
+        Name of date column of export dataframe
+    map : dataframe
+        Geopandas dataframe contianing 'geometry' column
+    folder : str
+        Output folder name
+    color_change : "opacity" | "color", optional
+        For a stacked graph, what to vary of iterations
+    by : str, week by default
+        Used for file naming
+    incl_dd : boolean, False by default
+        Whether to include hot-cold and cold-hot regions
+    stack : boolean, False by default
+        Whether to stack plots
+    limit : optional
+        Limit number of iterations
+    """
+
+    if not isinstance(cols, list):
+        cols = [cols]
+
+    count = 0
+    for col in cols: 
+
+        if stack:
+            f, ax = plt.subplots(figsize=(9, 9))
+            f.set_facecolor("white") # plot backgroundcolor, I like navajowhite
+
+        num_itrs = min(limit, len(export[col])) if limit else len(export[col])
+        for i, quadrants in tqdm(enumerate(export[col]), total=num_itrs):
+
+            if limit and count - 1 == limit: 
+                break
+            count += 1
+
+            if not incl_dd: 
+                quadrants = quadrants * (quadrants % 2 != 0) # remove doughnut and diamond
+
+            if not stack: 
+                f, ax = plt.subplots(figsize=(9, 9)) # reset plot
+                f.set_facecolor("white")
+            
+            # the labels have to be sorted into the same order as the hcmap, you can leave the legends as the numbers
+            # by changing cl=quadrants, but I don't know how to get the colors right without using numbers
+            labels = ["0. Not Significant", "1. Hot Spot", "2. Doughnut", f"{3 if incl_dd else 2}. Cold Spot", "4. Diamond"]
+            filtered_labels = filter_dd(labels, incl_dd)
+
+            hcmap = get_heat_map_colors(incl_dd, stack, i, num_itrs, color_change)
+
+            # We want all the labels in the legend:
+            #  * Append blank rows to the map
+            #  * Assign the correct labels to rows with information, And all labels to the blank rows
+            map \
+                .append([{k: None for k in map.columns} for _ in range(len(filtered_labels))], ignore_index=True) \
+                .assign(cl = [*[labels[q] for q in quadrants], *filtered_labels]) \
+                .plot(column='cl', categorical=True, k=2, cmap=hcmap, ax=ax, legend=True, edgecolor='black', linewidth=0.3)
+
+            if not stack:
+                date = export[date_col][i]
+
+                if isinstance(date, list):
+                    plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
+                else:
+                    plot_title = f"{col.title().replace('_', ' ')}, {date}"
+
+                path=f"{folder}/{by}{i}_{col}_heat{'_dd' if incl_dd else ''}.png"
+                ax.set_axis_off()
+                ax.set_title(plot_title)
+                plt.savefig(path)
+
+        if stack:
+            date = [export[date_col][0], export[date_col][num_itrs - 1]]
+
+            if isinstance(export[date_col][0], list):
+                date = [date[0][0], date[1][1]]
+
+            plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
+            path=f"{folder}/stacked_{col}_heat{'_dd' if incl_dd else ''}.png"
+            ax.set_axis_off()
+            ax.set_title(plot_title)
+            plt.savefig(path)
+
+def export_heat_vals(grouped, cols, date_col, group_col, map, map_group_col, limit=None, sig = 0.05):
+    """
+    Calculate map quadrants for each grouping
+
+    Parameters
+    ----------
+    grouped : dataframe
+        Result of group_data()
+    cols : str | list[str]
+        Column names for variables of interest
+    date_col : str
+        Name of grouped date column
+    group_col : str
+        Name of grouping (eg fips_code) column of data
+    map : dataframe
+        Geopandas dataframe with 'geometry' column
+    map_group_col : str
+        Coluumn of map dataframe with grouping (fips code) to join with grouped date
+    limit : num, optional
+        Limit number of iterations
+    sig : num, 0.05 by default
+        Significance level to perform local moran's I test at
+    Return
+    ------
+    (dataframe, list)
+        Tuple of: Dateframe containing quadrants, dates, and global moran test; list of fip codes in order
+    """
+    if not isinstance(cols, list):
+        cols = [cols]
+
+    output = pd.DataFrame(columns=[*cols, 'date', *[i + "_g" for i in cols]])
+
+    for i, (date, group) in tqdm(enumerate(grouped), total=min(limit, len(grouped)) if limit else len(grouped)):
+
+        if limit and i == limit:
+            break
+
+        # it's important we merge on map so grouping order is consistent
+        ordered = pd.merge(map, group, left_on=map_group_col, right_on=group_col)
+        
+        row = {
+            'date': [min(group['date_start']), max(group['date_end'])] if ('date_start' in ordered.columns) else min(group[date_col])
+        }
+
+        W = lps.weights.Queen(ordered['geometry'])
+        W.transform = 'r' # pysal.org/libpysal/generated/libpysal.weights.W.html#libpysal.weights.W.set_transform
+
+        for j, col in enumerate(cols):
+            # Local Moran quadrants
+            local_moran = Moran_Local(ordered[col], W)
+            row[col] = get_quadrant(local_moran, sig)
+
+            # Global Moran
+            mi = Moran(ordered[col], W, transformation='r', two_tailed=False)
+            row[col + "_g"] = (mi.I, mi.p_norm)
+
+        output = output.append(row, ignore_index=True)
+
+    return (output, map[map_group_col])
