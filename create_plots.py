@@ -1,5 +1,5 @@
 import libpysal as lps
-from esda import Moran_Local, Moran
+from esda import Moran_Local, Moran, fdr
 import matplotlib.pyplot as plt
 from matplotlib import colors
 import pandas as pd
@@ -92,7 +92,7 @@ def group_data(data, cols, date_col, group_col, by='week'):
 #
 #
 
-def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, folder, color_change="color", by='week', incl_dd = False, stack = False, limit=None, sig = 0.05):
+def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, folder, by='week', stack = False, limit=None, sig = 0.05):
     
     if not isinstance(cols, list):
         cols = [cols]
@@ -116,13 +116,7 @@ def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, fold
 
             W = lps.weights.Queen(ordered['geometry'])
             W.transform = 'r' # pysal.org/libpysal/generated/libpysal.weights.W.html#libpysal.weights.W.set_transform
-            
-            # Local Moran quadrants
-            local_moran = Moran_Local(ordered[col], W)
-            quadrants = local_moran.q * (local_moran.p_sim < sig) # significant quadrant values
-
-            if not incl_dd: 
-                quadrants = quadrants * (quadrants % 2 != 0) # remove doughnut and diamond
+            quadrants = moran_quadrants(ordered[col], W, sig)
 
             if not stack: # reset plot
                 f, ax = plt.subplots(figsize=(9, 9))
@@ -130,17 +124,16 @@ def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, fold
             
             # the labels have to be sorted into the same order as the hcmap, you can leave the legends as the numbers
             # by changing cl=quadrants, but I don't know how to get the colors right without using numbers
-            labels = ["0. Not Significant", "1. Hot Spot", "2. Doughnut", f"{3 if incl_dd else 2}. Cold Spot", "4. Diamond"]
-            filtered_labels = filter_dd(labels, incl_dd)
+            labels = ["0. Not Significant", "1. Hot Spot", "2. Cold Spot"]
 
-            hcmap = get_heat_map_colors(incl_dd, stack, i, num_itrs, color_change)
+            hcmap = get_heat_map_colors(stack, i, num_itrs)
 
             # We want all the labels in the legend:
             #  * Append blank rows to the map
             #  * Assign the correct labels to rows with information, And all labels to the blank rows
             map \
-                .append([{k: None for k in map.columns} for _ in range(len(filtered_labels))], ignore_index=True) \
-                .assign(cl = [*[labels[q] for q in quadrants], *filtered_labels]) \
+                .append([{k: None for k in map.columns} for _ in range(len(labels))], ignore_index=True) \
+                .assign(cl = [*[labels[q] for q in quadrants], *labels]) \
                 .plot(column='cl', categorical=True, k=2, cmap=hcmap, ax=ax, legend=True, edgecolor='black', linewidth=0.3)
 
             if not stack:
@@ -152,7 +145,7 @@ def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, fold
                     date = min(ordered[date_col])
                     plot_title = f"{col.title().replace('_', ' ')}, {date}"
 
-                path=f"{folder}/{by}{i}_{col}_heat{'_dd' if incl_dd else ''}.png"
+                path=f"{folder}/{by}{i}_{col}_heat.png"
                 ax.set_axis_off()
                 ax.set_title(plot_title)
                 plt.savefig(path)
@@ -166,7 +159,7 @@ def create_heat_map(grouped, cols, date_col, group_col, map, map_group_col, fold
                 plot_title = f"{col.title().replace('_', ' ')}, {date}"
 
             plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
-            path=f"{folder}/stacked_{col}_heat{'_dd' if incl_dd else ''}.png"
+            path=f"{folder}/stacked_{col}_heat.png"
             ax.set_axis_off()
             ax.set_title(plot_title)
             plt.savefig(path)
@@ -234,22 +227,18 @@ def create_quantile_map(grouped, cols, date_col, group_col, map, map_group_col, 
 #
 #
 
-def get_heat_map_colors(incl_dd, stack, stack_idx, stack_total, color_change):
+def get_heat_map_colors(stack, stack_idx, stack_total):
     """
     Returns map colors
 
     Parameters
     ----------
-    incl_dd : boolean
-        Whether to include hot-cold and cold-hot regions
     stack : boolean
         Whether to get colors for stacked graph
     stack_idx : num,
         Current index of stack iteration, required if stack == True
     stack_total : num,
         Total number of stack iterations, required if stack == True
-    color_change : "opacity" | "color"
-        What to change over time
     Return
     ------
     colors.ListedColormap
@@ -260,54 +249,36 @@ def get_heat_map_colors(incl_dd, stack, stack_idx, stack_total, color_change):
         # and we want a low opacity
 
         # scale_p : controls the other two rgb values for hot-hot, cold-cold
-        # scale_s : controls the other two rgb values for hot-cold, cold-hot
-        if color_change == "opacity":
-            scale_p = "00"
-            scale_s1 = "AF"
-            scale_s2 = "2C"
-            opac = get_color_scale(100, 180, stack_idx, stack_total)
-        elif color_change == "color":
-            scale_p = get_color_scale(90, 160, stack_idx, stack_total)
-            scale_s1 = get_color_scale(160, 220, stack_idx, stack_total)
-            scale_s2 = get_color_scale(160, 255, stack_idx, stack_total)
-            opac = get_color_scale(60, 60, 0, 1) # always 60 
+        scale = 1 - stack_idx/(stack_total-1) * 4/9
 
-        # map colors: not significant, hot spot, doughnut, cold spot, diamond
+        # map colors: not significant, hot spot, cold spotd
         map_colors = [
             f'#ffffff00', # important that opacity is set to zero
-            f"#ff{scale_p}{scale_p}{opac}",  # hot-hot, red color
-            f'#{scale_s2}{scale_s1}ff{opac}',  # cold-hot
-            f"#{scale_p}{scale_p}ff{opac}",  # cold-cold, blue color
-            f'#ff{scale_s1}{scale_s2}{opac}'   # hot-cold
+            colors.hsv_to_rgb([0, scale, 1]),  # hot-hot, red color
+            colors.hsv_to_rgb([0.767, scale, 1])  # cold-cold, blue color
         ]
+
     else:
-        # map colors: not significant, hot spot, doughnut, cold spot, diamond
-        map_colors = ['white', 'red', 'lightblue', 'blue', 'pink']
+        # map colors: not significant, hot spot, cold spot
+        map_colors = ['white', 'red', 'blue']
 
-    return colors.ListedColormap(filter_dd(map_colors, incl_dd)) 
+    return colors.ListedColormap(map_colors)
 
-def get_color_scale(min, max, curr_val, max_val):
-    """"
-    Get hex color
+def moran_quadrants(col, W, alpha):
+    local_moran = Moran_Local(col, W)
 
-    Parameters
-    ----------
-    min : num
-        Minumum hex value (ending value)
-    max : num
-        Maximum hex value (starting vaule)
-    curr_val : num
-        Current index out of iterations
-    max_val : num
-        Total number of iterations
+    ps = local_moran.p_sim
+    qs = local_moran.q
+    f = fdr(ps, alpha)
 
-    Return
-    ------
-    str
-        Hex code
-    """
-    output = hex(int(max - (curr_val + 1) / max_val * (max - min)))[2:]
-    return output if len(str(output)) == 2 else '0' + output  # ensure length of 2
+    return [
+        (
+            int((qs[i] + 1) / 2)    # hot-hot = 1, cold-cold = 2
+            if ps[i] <= f and qs[i] in [1, 3]  # only significant hot-hot and cold-cold
+            else 0
+        ) 
+        for i in range(0, len(col))
+    ]
 
 def get_year_week(date):
     """
@@ -333,24 +304,6 @@ def get_year_week(date):
 
     # Year comes first so dataframe is sorted chronologically
     return (year, week_num)
-
-def filter_dd(arr, incl_dd):
-    """
-    Filters out hot-cold and cold-hot regions
-
-    Parameters
-    ----------
-    arr : list
-        Length 5
-    incl_dd : boolean
-        Whether to include hot-cold and cold-hot regions
-
-    Return
-    ------
-    list
-        Filtered list
-    """
-    return arr if incl_dd else [arr[i] for i in [0, 1, 3]]
 
 #
 #
@@ -486,7 +439,7 @@ def create_quantile_map_from_export(export, cols, date_col, map, folder, k=10, l
 #
 #
 
-def create_heat_map_from_export(export, cols, date_col, map, folder, color_change="color", by="week", incl_dd = False, stack = False, limit=None):
+def create_heat_map_from_export(export, cols, date_col, map, folder, color_change="color", by="week", stack = False, limit=None):
     """
     Creates heat maps.
 
@@ -531,26 +484,22 @@ def create_heat_map_from_export(export, cols, date_col, map, folder, color_chang
                 break
             count += 1
 
-            if not incl_dd: 
-                quadrants = quadrants * (quadrants % 2 != 0) # remove doughnut and diamond
-
             if not stack: # reset plot
                 f, ax = plt.subplots(figsize=(9, 9))
                 f.set_facecolor("white")
             
             # the labels have to be sorted into the same order as the hcmap, you can leave the legends as the numbers
             # by changing cl=quadrants, but I don't know how to get the colors right without using numbers
-            labels = ["0. Not Significant", "1. Hot Spot", "2. Doughnut", f"{3 if incl_dd else 2}. Cold Spot", "4. Diamond"]
-            filtered_labels = filter_dd(labels, incl_dd)
+            labels = ["0. Not Significant", "1. Hot Spot", "2. Cold Spot"]
 
-            hcmap = get_heat_map_colors(incl_dd, stack, i, num_itrs, color_change)
+            hcmap = get_heat_map_colors(stack, i, num_itrs, color_change)
 
             # We want all the labels in the legend:
             #  * Append blank rows to the map
             #  * Assign the correct labels to rows with information, And all labels to the blank rows
             map \
-                .append([{k: None for k in map.columns} for _ in range(len(filtered_labels))], ignore_index=True) \
-                .assign(cl = [*[labels[q] for q in quadrants], *filtered_labels]) \
+                .append([{k: None for k in map.columns} for _ in range(len(labels))], ignore_index=True) \
+                .assign(cl = [*[labels[q] for q in quadrants], *labels]) \
                 .plot(column='cl', categorical=True, k=2, cmap=hcmap, ax=ax, legend=True, edgecolor='black', linewidth=0.3)
 
             if not stack:
@@ -561,7 +510,7 @@ def create_heat_map_from_export(export, cols, date_col, map, folder, color_chang
                 else:
                     plot_title = f"{col.title().replace('_', ' ')}, {date}"
 
-                path=f"{folder}/{by}{i}_{col}_heat{'_dd' if incl_dd else ''}.png"
+                path=f"{folder}/{by}{i}_{col}_heat.png"
                 ax.set_axis_off()
                 ax.set_title(plot_title)
                 plt.savefig(path)
@@ -573,7 +522,7 @@ def create_heat_map_from_export(export, cols, date_col, map, folder, color_chang
                 date = [date[0][0], date[1][1]]
 
             plot_title = f"{col.title().replace('_', ' ')} From {date[0]} to {date[1]}"
-            path=f"{folder}/stacked_{col}_heat{'_dd' if incl_dd else ''}.png"
+            path=f"{folder}/stacked_{col}_heat.png"
             ax.set_axis_off()
             ax.set_title(plot_title)
             plt.savefig(path)
@@ -627,8 +576,7 @@ def export_heat_vals(grouped, cols, date_col, group_col, map, map_group_col, lim
 
         for j, col in enumerate(cols):
             # Local Moran quadrants
-            local_moran = Moran_Local(ordered[col], W)
-            row[col] = local_moran.q * (local_moran.p_sim < sig) # significant quadrant values
+            row[col] = moran_quadrants(ordered[col], W, sig)
 
             # Global Moran
             mi = Moran(ordered[col], W, transformation='r', two_tailed=False)
