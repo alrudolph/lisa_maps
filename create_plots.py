@@ -321,6 +321,18 @@ def get_year_week(date):
 #
 #
 
+def bin(data):
+    bins = [1000, 2500, 5000, 10000, 15000, 20000]
+
+    def get_ind(num):
+        for i, val in enumerate(bins):
+            if val > num:
+                return i
+        return 6
+    return list(map(get_ind, data))
+
+
+
 def export_quantile_vals(grouped, cols, date_col, group_col, map, map_group_col, k=10, limit=None):
     """
     Calculate quantiles for each group
@@ -352,7 +364,7 @@ def export_quantile_vals(grouped, cols, date_col, group_col, map, map_group_col,
     if not isinstance(cols, list):
         cols = [cols]
     
-    output = pd.DataFrame(columns=[*cols, 'date', *[i + "_bin" for i in cols]])
+    output = pd.DataFrame(columns=[*cols, 'date'])#, *[i + "_bin" for i in cols]])
 
     for i, (date, group) in tqdm(enumerate(grouped), total=min(limit, len(grouped)) if limit else len(grouped)):
         
@@ -367,9 +379,10 @@ def export_quantile_vals(grouped, cols, date_col, group_col, map, map_group_col,
         }
 
         for col in cols:
-            temp = mc.Quantiles(ordered[col], k=k)
-            row[col + "_bin"] = temp.bins
-            row[col] = temp.yb
+            temp = bin(ordered[col])
+            #row[col + "_bin"] = temp.bins
+            row[col] = temp#.yb
+
 
         output = output.append(row, ignore_index = True)
 
@@ -379,7 +392,7 @@ def create_quantile_map_from_export(export, cols, date_col, map, folder, k=10, l
     """
     Plot quantile map from export
 
-    Parameters
+    Parameterss
     ----------
     export : dataframe
         result of export_quantile_vals
